@@ -1,0 +1,39 @@
+<!-- Běžná část HTML s grafem -->
+<div class="bg-white p-6 rounded-xl shadow mb-8">
+    <h2 class="text-xl font-bold mb-4">Vývoj spotřeby v čase</h2>
+    <canvas id="consumptionChart" class="w-full h-64"></canvas>
+</div>
+
+<!-- Bezpečné předání dat z Django do JS bez červených chyb v editoru -->
+{{ chart_labels|json_script:"chart-labels-data" }}
+{{ chart_data|json_script:"chart-values-data" }}
+
+<script>
+    // Načtení dat z JSON skriptu
+    const labels = JSON.parse(document.getElementById('chart-labels-data').textContent);
+    const dataValues = JSON.parse(document.getElementById('chart-values-data').textContent);
+
+    const ctx = document.getElementById('consumptionChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Spotřeba (l/100km)',
+                data: dataValues,
+                borderColor: '#2563eb',
+                backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                tension: 0.3,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: false
+                }
+            }
+        }
+    });
+</script>
