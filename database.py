@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -17,4 +18,25 @@ def get_db():
     try:
         yield db
     finally:
+=======
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# Použití lokálního SQLite souboru
+SQLALCHEMY_DATABASE_URL = "sqlite:///./sql_app.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+>>>>>>> 08849c24b7c9c1475bfc83170e9d3382820f80d5
         db.close()
