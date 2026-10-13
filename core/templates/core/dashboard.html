@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - TrackMyRide</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans min-h-screen selection:bg-blue-500 selection:text-white">
+
+    <!-- HORNÍ NAVIGACE -->
+    <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <span class="text-3xl">🏎️</span>
+                <span class="text-2xl font-black tracking-tight bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                    TrackMyRide
+                </span>
+            </div>
+            
+            <div class="flex items-center space-x-6">
+                <div class="flex items-center space-x-3 bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700/50">
+                    <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-500 flex items-center justify-center font-bold text-white text-sm">
+                        {{ user.name[0] if user and user.name else 'U' }}
+                    </div>
+                    <span class="text-sm font-medium text-slate-200">{{ user.name or user.email if user else 'Uživatel' }}</span>
+                </div>
+                <a href="/logout" class="text-xs text-slate-400 hover:text-red-400 font-medium transition">
+                    Odhlásit se
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-8">
+        <!-- SEKTOR GARÁŽE & TLAČÍTKA -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Moje garáž</h1>
+                <p class="text-slate-400 text-sm">Přehled vašich vozidel a statistik spotřeby</p>
+            </div>
+            
+            <button onclick="document.getElementById('addVehicleModal').classList.remove('hidden')" 
+                    class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold px-5 py-2.5 rounded-xl shadow-lg shadow-blue-500/20 text-sm transition self-start md:self-auto">
+                + Přidat auto
+            </button>
+        </div>
+
+        {% if not vehicles %}
+        <!-- STAV PŘI PRÁZDNÉ GARÁŽI -->
+        <div class="bg-slate-800/40 border border-slate-800 rounded-3xl p-12 text-center max-w-xl mx-auto my-12">
+            <div class="text-5xl mb-4">🚗</div>
+            <h2 class="text-xl font-bold text-white mb-2">Vaše garáž je zatím prázdná</h2>
+            <p class="text-slate-400 text-sm mb-6">Přidejte svoje první auto, abyste mohli začít evidovat tankování a trasy.</p>
+            <button onclick="document.getElementById('addVehicleModal').classList.remove('hidden')" 
+                    class="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-6 py-3 rounded-xl shadow-lg transition text-sm">
+                + Přidat první auto
+            </button>
+        </div>
+        {% else %}
+
+        <!-- METRIKY AUTA -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl">
+                <span class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Vybrané vozidlo</span>
+                <h3 class="text-xl font-bold text-white mt-1">{{ selected_vehicle.name }}</h3>
+                <p class="text-xs text-slate-400 mt-1">{{ selected_vehicle.brand }} {{ selected_vehicle.model }} ({{ selected_vehicle.year }})</p>
+            </div>
+            
+            <div class="bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl">
+                <span class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Průměrná spotřeba</span>
+                <h3 class="text-2xl font-black text-blue-400 mt-1">{{ avg_consumption }} <span class="text-sm font-normal text-slate-400">l/100km</span></h3>
+            </div>
+
+            <div class="bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl">
+                <span class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Celkové náklady za palivo</span>
+                <h3 class="text-2xl font-black text-indigo-400 mt-1">{{ total_cost }} <span class="text-sm font-normal text-slate-400">Kč</span></h3>
+            </div>
+        </div>
+
+        <!-- GRAF SPOTŘEBY -->
+        <div class="bg-slate-800/60 border border-slate-700/50 p-6 rounded-2xl shadow-xl mb-8">
+            <h2 class="text-lg font-bold text-slate-200 mb-4">Vývoj spotřeby v čase</h2>
+            <div class="h-64 w-full">
+                <canvas id="consumptionChart"></canvas>
+            </div>
+        </div>
+        {% endif %}
+    </main>
+
+    <!-- MODÁLNÍ OKNO PRO PŘIDÁNÍ AUTA Z API -->
+    <div id="addVehicleModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-slate-800 border border-slate-700 w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
+            <h2 class="text-xl font-bold text-white mb-4">Nové vozidlo</h2>
+            <form action="/vehicle/add" method="POST" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">Název vozidla</label>
+                    <input type="text" id="vehicleNameInput" name="name" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" placeholder="např. Moje Audi">
+                </div>
+                
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Značka</label>
+                        <select id="brandSelect" name="brand" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                            <option value="">-- Vyberte značku --</option>
+                            <option value="Audi">Audi</option>
+                            <option value="BMW">BMW</option>
+                            <option value="Citroen">Citroën</option>
+                            <option value="Ford">Ford</option>
+                            <option value="Honda">Honda</option>
+                            <option value="Hyundai">Hyundai</option>
+                            <option value="Kia">Kia</option>
+                            <option value="Mazda">Mazda</option>
+                            <option value="Mercedes-Benz">Mercedes-Benz</option>
+                            <option value="Nissan">Nissan</option>
+                            <option value="Opel">Opel</option>
+                            <option value="Peugeot">Peugeot</option>
+                            <option value="Porsche">Porsche</option>
+                            <option value="Renault">Renault</option>
+                            <option value="Seat">Seat</option>
+                            <option value="Skoda">Škoda</option>
+                            <option value="Subaru">Subaru</option>
+                            <option value="Toyota">Toyota</option>
+                            <option value="Volkswagen">Volkswagen</option>
+                            <option value="Volvo">Volvo</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Model</label>
+                        <select id="modelSelect" name="model" required disabled class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50">
+                            <option value="">Nejdříve vyberte značku</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Rok výroby</label>
+                        <input type="number" name="year" value="2015" min="1950" max="2026" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">SPZ (volitelné)</label>
+                        <input type="text" name="license_plate" placeholder="1A2 3456" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" onclick="document.getElementById('addVehicleModal').classList.add('hidden')" class="px-4 py-2 text-slate-400 hover:text-white text-sm font-medium">Zrušit</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-5 py-2 rounded-xl text-sm transition">Uložit auto</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SKRIPTY -->
+    {% if selected_vehicle %}
+    <script>
+        const chartDates = JSON.parse('{{ chart_dates | tojson }}');
+        const chartConsumptions = JSON.parse('{{ chart_consumptions | tojson }}');
+
+        const ctx = document.getElementById('consumptionChart');
+        if (ctx) {
+            new Chart(ctx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: chartDates,
+                    datasets: [{
+                        label: 'Spotřeba (l/100km)',
+                        data: chartConsumptions,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true,
+                        pointBackgroundColor: '#60a5fa'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#94a3b8' } } },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+                        y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+                    }
+                }
+            });
+        }
+    </script>
+    {% endif %}
+
+    <script>
+        const brandSelect = document.getElementById("brandSelect");
+        const modelSelect = document.getElementById("modelSelect");
+        const nameInput = document.getElementById("vehicleNameInput");
+
+        if (brandSelect && modelSelect) {
+            brandSelect.addEventListener("change", async function () {
+                const selectedBrand = this.value;
+                
+                if (!selectedBrand) {
+                    modelSelect.innerHTML = '<option value="">Nejdříve vyberte značku</option>';
+                    modelSelect.disabled = true;
+                    return;
+                }
+
+                modelSelect.innerHTML = '<option value="">Načítám modely z API...</option>';
+                modelSelect.disabled = true;
+
+                try {
+                    let apiBrand = selectedBrand;
+                    if (selectedBrand === 'Škoda') apiBrand = 'Skoda';
+
+                    const response = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/getmodelsformake/${encodeURIComponent(apiBrand)}?format=json`);
+                    const data = await response.json();
+
+                    modelSelect.innerHTML = '<option value="">-- Vyberte model --</option>';
+
+                    if (data.Results && data.Results.length > 0) {
+                        const models = [...new Set(data.Results.map(item => item.Model_Name))].sort();
+                        
+                        models.forEach(model => {
+                            const opt = document.createElement("option");
+                            opt.value = model;
+                            opt.textContent = model;
+                            modelSelect.appendChild(opt);
+                        });
+                        modelSelect.disabled = false;
+                    } else {
+                        modelSelect.innerHTML = '<option value="">Žádné modely nenalezeny</option>';
+                    }
+                } catch (err) {
+                    console.error("Chyba API:", err);
+                    modelSelect.innerHTML = '<option value="">Chyba při načítání modelů</option>';
+                }
+            });
+
+            modelSelect.addEventListener("change", function () {
+                if (brandSelect.value && this.value && nameInput && !nameInput.value) {
+                    nameInput.value = `${brandSelect.value} ${this.value}`;
+                }
+            });
+        }
+    </script>
+</body>
+</html>

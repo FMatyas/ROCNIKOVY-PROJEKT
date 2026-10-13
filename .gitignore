@@ -1,0 +1,10 @@
+# Citlivé klíče a konfigurace
+.env
+
+# Databáze
+*.db
+
+# Virtuální prostředí
+venv/
+.venv/
+__pycache__/
