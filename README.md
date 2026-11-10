@@ -1,49 +1,41 @@
 # 🚗 TrackMyRide
-### Chytrý správce tvého auta, spotřeby a provozních nákladů.
-
-### Měj vše pod kontrolou – od nádrže až po servis.
+Chytrý správce tvého auta, spotřeby a provozních nákladů. Měj vše pod kontrolou – od nádrže až po servis.
 
 ## 📸 O projektu
-### TrackMyRide je moderní aplikace určená pro všechny řidiče, kteří chtějí mít dokonalý přehled o svém vozidle bez nutnosti psát si papírové deníky nebo se hrabat v nepřehledných Excel tabulkách.
+**TrackMyRide** je moderní full-stack webová aplikace určená pro všechny řidiče, kteří chtějí mít dokonalý přehled o svém vozidle bez nutnosti psát si papírové deníky nebo se hrabat v nepřehledných Excel tabulkách. 
 
-### Aplikace ti po zadání základních údajů o tankování nebo jízdě okamžitě spočítá reálnou spotřebu, cenou za 1 km provozu a zobrazí veškeré náklady v přehledných grafech. Navíc tě pohlídá, aby ses nezapomněl vydat na garanční prohlídku nebo STK! 🛠️
-
-# 1. Přidání všech souborů do Gitu
-git add .
-
-# 2. Vytvoření commitu
-git commit -m "Initial release of TrackMyRide application"
-
-# 3. Stažení a sloučení případné historie z GitHubu (např. README.md)
-git pull origin main --allow-unrelated-histories --no-rebase
-
-# 4. Nahrání na GitHub
-git push -u origin main
+Aplikace kombinuje výkonný **FastAPI** backend s moderním a responzivním **React** rozhraním v jednotné architektuře. Po zadání údajů o tankování nebo jízdě automaticky vyhodnocuje provozní data, sleduje náklady a hlídá důležité termíny.
 
 ## ✨ Hlavní funkce
-### ⛽ Evidence tankování: Zadej natankované litry, cenu a stav tachometru. Aplikace sama dopočítá přesnou spotřebu paliva.
-
-### 🗺️ Kniha jízd: Snadný zápis služebních i soukromých tras s výpočtem nákladů na cestu.
-
-### 🛠️ Servisní deník: Přehledná historie oprav, výměn oleje, pneumatik a servisních úkonů.
-
-### 🔔 Chytrá upozornění: Notifikace na blížící se výměnu provozních kapalin, servisní prohlídku nebo konec platnosti STK.
-
-### 📊 Analytika a grafy: Vizuální přehledy měsíčních výdajů, vývoje cen paliva a průměrné spotřeby v čase.
-
-### 🚗 Garáž (Multi-vehicle): Správa více vozidel pod jedním uživatelským účtem.
+* **⛽ Evidence tankování:** Záznam litrů, ceny a tachometru s automatickým výpočtem spotřeby.
+* **🗺️ Kniha jízd:** Správa tras, vzdáleností a účelů jednotlivých jízd.
+* **🛠️ Servisní deník:** Přehledná historie oprav, údržby a nákladů na servis.
+* **📄 Doklady a STK:** Sledování platnosti dokladů a termínů technické kontroly.
+* **📊 Dashboard a statistiky:** Přehledné zobrazení celkových nákladů a průměrné spotřeby.
+* **🚗 Multi-vehicle garáž:** Správa více vozidel pod jedním uživatelským účtem.
 
 ## 🛠️ Použité technologie (Tech Stack)
-## Backend & Databáze
-### 🐍 Python / Django / FastAPI (nebo Node.js / PHP Laravel)
 
-### 🗄️ PostgreSQL / MySQL – relakční databáze pro bezpečné uložení dat
+### Backend
+* **Python & FastAPI** – RESTful API a produkční servírování statických souborů z jediné adresy.
+* **SQLAlchemy & SQLite** – ORM a relační správa databáze.
+* **Passlib & Starlette Sessions** – Bezpečné hashování hesel a správa uživatelských relací.
+* **Requests** – Integrace s externími službami (např. veřejné VIN API).
 
-### 🔐 JWT / Session Authentication – zabezpečené přihlašování uživatelů
+### Frontend
+* **React & Vite** – Moderní Single Page Application (SPA) s rychlým sestavením.
+* **Custom CSS / Glassmorphism** – Vizuálně atraktivní tmavé uživatelské rozhraní s plynulými přechody a animacemi.
 
-## Frontend
-### ⚛️ React / Vue.js (nebo Blade / HTML5 + Tailwind CSS)
+## 🚀 Spuštění projektu
 
-### 📈 Chart.js / Recharts – vykreslování dynamických grafů
+### 1. Vývojový režim (Development)
+Pro živý náhled s HMR spusť zvlášť backend a frontend:
+* **Backend:** `uvicorn main:app --reload` (na portu `8000`)
+* **Frontend:** `npm run dev` ve složce `frontend` (na portu `5173`)
 
-### 📱 Responsive Design (PWA) – plná optimalizace pro mobilní telefony
+### 2. Produkční sjednocený režim (Production / Obhajoba)
+Aplikace je navržena tak, aby běžela jako jeden celistvý servis přímo z FastAPI:
+1. Přejdi do složky frontend: `cd frontend`
+2. Vytvoř build: `npm run build`
+3. Vrať se do kořene a spusť server: `uvicorn main:app --reload`
+4. Otevři v prohlížeči: `http://127.0.0.1:8000`

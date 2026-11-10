@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  trackmyride:
+    build: .
+    container_name: trackmyride_app
+    ports:
+      - "8000:8000"
+    environment:
+      # --- API PRO VIN (eTechničák) ---
+      - DATAOVOZIDLECH_API_KEY=UL48f06jWdtL6rlTEcVx9Mgehx8DoGY5
+
+      # --- GOOGLE OAUTH PŘIHLÁŠENÍ ---
+      # Získej v Google Cloud Console (https://console.cloud.google.com/apis/credentials)
+      - GOOGLE_CLIENT_ID=tvuj_google_client_id.apps.googleusercontent.com
+      - GOOGLE_CLIENT_SECRET=tvuj_google_client_secret
+
+      # --- BEZPEČNOST NATIVE FASTAPI SESSIONS ---
+      - SECRET_KEY=super_tajny_klic_pro_trackmyride_session_12345
+
+      # --- CESTA K DATABÁZI UTVOŘENÁ DOCKEREM ---
+      - DATABASE_URL=sqlite:///./data/sql_app.db
+
+    volumes:
+      # Propojí složku ./data na disku s vnitřkem kontejneru (databáze se nesmaže při restartu)
+      - ./data:/app/data
+    restart: always

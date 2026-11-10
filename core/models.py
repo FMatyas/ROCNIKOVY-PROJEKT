@@ -1,9 +1,16 @@
-<<<<<<< HEAD
 from datetime import datetime
-from sqlalchemy import Column, Date, Float, ForeignKey, Integer, String
-from sqlalchemy.orm import relationship
-
 from database import Base
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    Numeric,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
+from sqlalchemy.orm import relationship
 
 
 class User(Base):
@@ -11,10 +18,13 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=True)
-    full_name = Column(String, nullable=True)
+    full_name = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    is_admin = Column(Boolean, nullable=False, default=False)
 
-    vehicles = relationship("Vehicle", back_populates="owner")
+    vehicles = relationship(
+        "Vehicle", back_populates="owner", cascade="all, delete-orphan"
+    )
 
 
 class Vehicle(Base):
@@ -22,15 +32,28 @@ class Vehicle(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=True)
     brand = Column(String, nullable=False)
     model = Column(String, nullable=False)
-    year = Column(Integer)
-    license_plate = Column(String, nullable=True)
+    generation = Column(String, nullable=True)
+    engine = Column(String, nullable=True)
+    power_kw = Column(Integer, nullable=True)
+    year = Column(Integer, nullable=True)
+    vin = Column(String(17), unique=True, nullable=True)
+    license_plate = Column(String(20), nullable=True)
 
     owner = relationship("User", back_populates="vehicles")
     refuelings = relationship(
         "Refueling", back_populates="vehicle", cascade="all, delete-orphan"
+    )
+    trips = relationship(
+        "Trip", back_populates="vehicle", cascade="all, delete-orphan"
+    )
+    services = relationship(
+        "ServiceRecord", back_populates="vehicle", cascade="all, delete-orphan"
+    )
+    documents = relationship(
+        "Document", back_populates="vehicle", cascade="all, delete-orphan"
     )
 
 
@@ -39,49 +62,52 @@ class Refueling(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False)
-    date = Column(Date, nullable=False)
+    date = Column(Date, default=datetime.utcnow, nullable=False)
+    liters = Column(Numeric(6, 2), nullable=False)
+    price_total = Column(Numeric(10, 2), nullable=False)
     odometer = Column(Integer, nullable=False)
-    liters = Column(Float, nullable=False)
-    price_total = Column(Float, nullable=False)
-    calculated_consumption = Column(Float, nullable=True)
+    calculated_consumption = Column(Numeric(4, 2), nullable=True)
 
     vehicle = relationship("Vehicle", back_populates="refuelings")
-=======
-from django.db import models
-from django.contrib.auth.models import User
 
-class Vehicle(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='vehicles')
-    name = models.CharField(max_length=100, verbose_name="Název auta (např. Moje Audi)")
-    brand = models.CharField(max_length=50, verbose_name="Značka")
-    model = models.CharField(max_length=50, verbose_name="Model")
-    year = models.IntegerField(verbose_name="Rok výroby")
-    license_plate = models.CharField(max_length=15, blank=True, verbose_name="SPZ")
 
-    def __str__(self):
-        return f"{self.name} ({self.license_plate})"
+class Trip(Base):
+    __tablename__ = "trips"
 
-class Refueling(models.Model):
-    vehicle = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='refuelings')
-    date = models.DateField(verbose_name="Datum tankování")
-    odometer = models.PositiveIntegerField(verbose_name="Stav tachometru (km)")
-    liters = models.DecimalField(max_digits=6, decimal_places=2, verbose_name="Natankováno (l)")
-    price_total = models.DecimalField(max_digits=8, decimal_places=2, verbose_name="Celková cena (Kč)")
-    calculated_consumption = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name="Spočítaná spotřeba (l/100km)")
+    id = Column(Integer, primary_key=True, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False)
+    title = Column(String, nullable=False)
+    date = Column(Date, default=datetime.utcnow, nullable=False)
+    start_location = Column(String, nullable=True)
+    destination = Column(String, nullable=True)
+    distance_km = Column(Numeric(8, 2), nullable=False)
+    avg_consumption = Column(Numeric(4, 2), nullable=True)
+    note = Column(Text, nullable=True)
 
-    class Meta:
-        ordering = ['-odometer']
+    vehicle = relationship("Vehicle", back_populates="trips")
 
-    def __str__(self):
-        return f"{self.date} - {self.liters} l ({self.vehicle.name})"
 
-class Ride(models.Model):
-    vehicle = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='rides')
-    date = models.DateField(verbose_name="Datum jízdy")
-    distance_km = models.DecimalField(max_digits=6, decimal_places=1, verbose_name="Vzdálenost (km)")
-    avg_consumption = models.DecimalField(max_digits=4, decimal_places=2, verbose_name="Průměrná spotřeba z PP (l/100km)")
-    note = models.CharField(max_length=255, blank=True, verbose_name="Poznámka / Trasa")
+class ServiceRecord(Base):
+    __tablename__ = "service_records"
 
-    def __str__(self):
-        return f"{self.date} - {self.distance_km} km"
->>>>>>> 08849c24b7c9c1475bfc83170e9d3382820f80d5
+    id = Column(Integer, primary_key=True, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False)
+    date = Column(Date, default=datetime.utcnow, nullable=False)
+    title = Column(String, nullable=False)
+    cost = Column(Numeric(10, 2), nullable=False)
+    mileage = Column(Integer, nullable=False)
+    note = Column(Text, nullable=True)
+
+    vehicle = relationship("Vehicle", back_populates="services")
+
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False)
+    doc_type = Column(String, nullable=False)
+    expiry_date = Column(Date, nullable=False)
+    note = Column(Text, nullable=True)
+
+    vehicle = relationship("Vehicle", back_populates="documents")
