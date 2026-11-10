@@ -26,6 +26,11 @@ Aplikace kombinuje výkonný **FastAPI** backend s moderním a responzivním **R
 * **React & Vite** – Moderní Single Page Application (SPA) s rychlým sestavením.
 * **Custom CSS / Glassmorphism** – Vizuálně atraktivní tmavé uživatelské rozhraní s plynulými přechody a animacemi.
 
+## 🗄️ Databázové schéma
+Níže je znázorněna struktura relační databáze a vazby mezi tabulkami:
+
+![Databázové schéma TrackMyRide](./docs/Databaze.png)
+
 ## 🚀 Spuštění projektu
 
 ### 1. Vývojový režim (Development)
