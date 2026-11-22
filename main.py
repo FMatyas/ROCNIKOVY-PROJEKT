@@ -1,10 +1,12 @@
 from datetime import datetime
 from decimal import Decimal
-from dotenv import load_dotenv
 import os
+from typing import Optional
+
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from passlib.context import CryptContext
 import requests
@@ -22,10 +24,15 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="TrackMyRide API")
 
-# Konfigurace CORS pro React frontend (Vite běží standardně na portu 5173)
+# Konfigurace CORS pro React frontend (Vite dev server i lokální produkce)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,31 +46,52 @@ app.add_middleware(
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def verify_password(plain_password, hashed_password):
+def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def get_password_hash(password):
+def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
+
+
+def set_user_session(request: Request, db_user: models.User) -> dict:
+    user_payload = {
+        "id": db_user.id,
+        "email": db_user.email,
+        "name": db_user.full_name,
+        "is_admin": db_user.is_admin,
+    }
+    request.session["user"] = user_payload
+    return user_payload
+
+
+def get_session_user(request: Request) -> dict:
+    user_session = request.session.get("user")
+    if not user_session:
+        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+    return user_session
 
 
 @app.on_event("startup")
 def create_admin_user():
     db = next(get_db())
-    admin_email = "admin@trackmyride.cz"
-    admin = (
-        db.query(models.User).filter(models.User.email == admin_email).first()
-    )
-    if not admin:
-        hashed_pw = get_password_hash("admin123")
-        admin_user = models.User(
-            email=admin_email,
-            full_name="Super Admin",
-            hashed_password=hashed_pw,
-            is_admin=True,
+    try:
+        admin_email = "admin@trackmyride.cz"
+        admin = (
+            db.query(models.User).filter(models.User.email == admin_email).first()
         )
-        db.add(admin_user)
-        db.commit()
+        if not admin:
+            hashed_pw = get_password_hash("admin123")
+            admin_user = models.User(
+                email=admin_email,
+                full_name="Super Admin",
+                hashed_password=hashed_pw,
+                is_admin=True,
+            )
+            db.add(admin_user)
+            db.commit()
+    finally:
+        db.close()
 
 
 # UNIVERZÁLNÍ VEŘEJNÉ VIN API
@@ -76,7 +104,9 @@ def fetch_vin_data(vin: str):
         )
 
     try:
-        fallback_url = f"https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/{clean_vin}?format=json"
+        fallback_url = (
+            f"https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/{clean_vin}?format=json"
+        )
         fb_resp = requests.get(fallback_url, timeout=5)
         if fb_resp.status_code == 200:
             fb_data = fb_resp.json()
@@ -124,20 +154,24 @@ def fetch_vin_data(vin: str):
 # ==========================================================================
 @app.get("/api/auth/me")
 def get_current_user(request: Request):
-    user = request.session.get("user")
-    if not user:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+    user = get_session_user(request)
     return {"success": True, "user": user}
 
 
 @app.post("/api/register")
-def register_user(user_in: schemas.UserRegister, request: Request, db: Session = Depends(get_db)):
+def register_user(
+    user_in: schemas.UserRegister, request: Request, db: Session = Depends(get_db)
+):
     if user_in.password != user_in.confirm_password:
         raise HTTPException(status_code=400, detail="Zadaná hesla se neshodují.")
 
-    existing_user = db.query(models.User).filter(models.User.email == user_in.email).first()
+    existing_user = (
+        db.query(models.User).filter(models.User.email == user_in.email).first()
+    )
     if existing_user:
-        raise HTTPException(status_code=400, detail="Tento e-mail je již zaregistrován.")
+        raise HTTPException(
+            status_code=400, detail="Tento e-mail je již zaregistrován."
+        )
 
     hashed_pw = get_password_hash(user_in.password)
     new_user = models.User(
@@ -150,40 +184,75 @@ def register_user(user_in: schemas.UserRegister, request: Request, db: Session =
     db.commit()
     db.refresh(new_user)
 
-    request.session["user"] = {
-        "id": new_user.id,
-        "email": new_user.email,
-        "name": new_user.full_name,
-        "is_admin": new_user.is_admin,
-    }
-    return {"success": True, "user": request.session["user"]}
+    user_payload = set_user_session(request, new_user)
+    return {"success": True, "user": user_payload}
 
 
 @app.post("/api/login")
-def login_user(credentials: schemas.UserLogin, request: Request, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == credentials.email).first()
+def login_user(
+    credentials: schemas.UserLogin, request: Request, db: Session = Depends(get_db)
+):
+    user = (
+        db.query(models.User).filter(models.User.email == credentials.email).first()
+    )
     if not user or not verify_password(credentials.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Nesprávný e-mail nebo heslo.")
 
-    request.session["user"] = {
-        "id": user.id,
-        "email": user.email,
-        "name": user.full_name,
-        "is_admin": user.is_admin,
-    }
-    return {"success": True, "user": request.session["user"]}
+    user_payload = set_user_session(request, user)
+    return {"success": True, "user": user_payload}
+
+
+@app.post("/api/auth/appwrite-google")
+async def auth_appwrite_google(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    email = (data.get("email") or "").strip().lower()
+    full_name = (data.get("full_name") or email or "Google User").strip()
+
+    if not email:
+        raise HTTPException(
+            status_code=400, detail="Chybí e-mailová adresa z Appwrite účtu."
+        )
+
+    db_user = db.query(models.User).filter(models.User.email == email).first()
+    if not db_user:
+        db_user = models.User(
+            email=email,
+            full_name=full_name,
+            hashed_password=get_password_hash(os.urandom(16).hex()),
+            is_admin=False,
+        )
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+    elif not db_user.full_name and full_name:
+        db_user.full_name = full_name
+        db.commit()
+        db.refresh(db_user)
+
+    user_payload = set_user_session(request, db_user)
+    return {"success": True, "user": user_payload}
 
 
 @app.post("/api/auth/google-login")
-def google_login_api(google_data: schemas.GoogleLogin, request: Request, db: Session = Depends(get_db)):
+def google_login_api(
+    google_data: schemas.GoogleLogin, request: Request, db: Session = Depends(get_db)
+):
     if not google_data.email:
         raise HTTPException(status_code=400, detail="Chybí e-mail.")
 
-    db_user = db.query(models.User).filter(models.User.email == google_data.email).first()
+    display_name = (
+        getattr(google_data, "name", None)
+        or getattr(google_data, "full_name", None)
+        or "Google User"
+    )
+
+    db_user = (
+        db.query(models.User).filter(models.User.email == google_data.email).first()
+    )
     if not db_user:
         db_user = models.User(
             email=google_data.email,
-            full_name=google_data.name or "Google User",
+            full_name=display_name,
             hashed_password=get_password_hash(os.urandom(16).hex()),
             is_admin=False,
         )
@@ -191,13 +260,8 @@ def google_login_api(google_data: schemas.GoogleLogin, request: Request, db: Ses
         db.commit()
         db.refresh(db_user)
 
-    request.session["user"] = {
-        "id": db_user.id,
-        "email": db_user.email,
-        "name": db_user.full_name,
-        "is_admin": db_user.is_admin,
-    }
-    return {"success": True, "user": request.session["user"]}
+    user_payload = set_user_session(request, db_user)
+    return {"success": True, "user": user_payload}
 
 
 @app.post("/api/logout")
@@ -210,11 +274,12 @@ def logout(request: Request):
 # 📊 DASHBOARD & STATISTIKY API
 # ==========================================================================
 @app.get("/api/dashboard")
-def dashboard_data(request: Request, vehicle_id: int = None, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
-
+def dashboard_data(
+    request: Request,
+    vehicle_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    user_session = get_session_user(request)
     vehicles = crud.get_user_vehicles(db, user_id=user_session["id"])
 
     selected_vehicle = None
@@ -246,8 +311,15 @@ def dashboard_data(request: Request, vehicle_id: int = None, db: Session = Depen
 
     return {
         "success": True,
-        "vehicles": [{"id": v.id, "name": v.name, "brand": v.brand, "model": v.model} for v in vehicles],
-        "selected_vehicle": {"id": selected_vehicle.id, "name": selected_vehicle.name} if selected_vehicle else None,
+        "vehicles": [
+            {"id": v.id, "name": v.name, "brand": v.brand, "model": v.model}
+            for v in vehicles
+        ],
+        "selected_vehicle": (
+            {"id": selected_vehicle.id, "name": selected_vehicle.name}
+            if selected_vehicle
+            else None
+        ),
         "avg_consumption": avg_consumption,
         "total_cost": total_cost,
         "chart_dates": chart_dates,
@@ -259,10 +331,12 @@ def dashboard_data(request: Request, vehicle_id: int = None, db: Session = Depen
 # 🚗 VOZIDLA API
 # ==========================================================================
 @app.post("/api/vehicles/add")
-def add_vehicle(vehicle_in: schemas.VehicleCreate, request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+def add_vehicle(
+    vehicle_in: schemas.VehicleCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_session = get_session_user(request)
 
     if not vehicle_in.name:
         vehicle_in.name = f"{vehicle_in.brand} {vehicle_in.model}"
@@ -279,9 +353,7 @@ def add_vehicle(vehicle_in: schemas.VehicleCreate, request: Request, db: Session
 # ==========================================================================
 @app.get("/api/trips")
 def get_trips(request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+    user_session = get_session_user(request)
 
     trips = (
         db.query(models.Trip)
@@ -290,14 +362,25 @@ def get_trips(request: Request, db: Session = Depends(get_db)):
         .order_by(models.Trip.date.desc())
         .all()
     )
-    return {"success": True, "trips": [{"id": t.id, "title": t.title, "date": str(t.date), "distance_km": float(t.distance_km)} for t in trips]}
+    return {
+        "success": True,
+        "trips": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "date": str(t.date),
+                "distance_km": float(t.distance_km),
+            }
+            for t in trips
+        ],
+    }
 
 
 @app.post("/api/trips/add")
-def add_trip(trip_in: schemas.TripCreate, request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+def add_trip(
+    trip_in: schemas.TripCreate, request: Request, db: Session = Depends(get_db)
+):
+    user_session = get_session_user(request)
 
     new_trip = models.Trip(
         vehicle_id=trip_in.vehicle_id,
@@ -306,7 +389,11 @@ def add_trip(trip_in: schemas.TripCreate, request: Request, db: Session = Depend
         start_location=trip_in.start_location,
         destination=trip_in.destination,
         distance_km=Decimal(str(trip_in.distance_km)),
-        avg_consumption=Decimal(str(trip_in.avg_consumption)) if trip_in.avg_consumption else None,
+        avg_consumption=(
+            Decimal(str(trip_in.avg_consumption))
+            if trip_in.avg_consumption
+            else None
+        ),
         note=trip_in.note,
     )
     db.add(new_trip)
@@ -319,9 +406,7 @@ def add_trip(trip_in: schemas.TripCreate, request: Request, db: Session = Depend
 # ==========================================================================
 @app.get("/api/refuelings")
 def get_refuelings(request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+    user_session = get_session_user(request)
 
     refuelings = (
         db.query(models.Refueling)
@@ -330,14 +415,28 @@ def get_refuelings(request: Request, db: Session = Depends(get_db)):
         .order_by(models.Refueling.date.desc())
         .all()
     )
-    return {"success": True, "refuelings": [{"id": r.id, "date": str(r.date), "liters": float(r.liters), "price_total": float(r.price_total), "odometer": r.odometer} for r in refuelings]}
+    return {
+        "success": True,
+        "refuelings": [
+            {
+                "id": r.id,
+                "date": str(r.date),
+                "liters": float(r.liters),
+                "price_total": float(r.price_total),
+                "odometer": r.odometer,
+            }
+            for r in refuelings
+        ],
+    }
 
 
 @app.post("/api/refuelings/add")
-def add_refueling(refueling_in: schemas.RefuelingCreate, request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+def add_refueling(
+    refueling_in: schemas.RefuelingCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_session = get_session_user(request)
 
     crud.create_refueling(db, refueling_in)
     return {"success": True}
@@ -348,9 +447,7 @@ def add_refueling(refueling_in: schemas.RefuelingCreate, request: Request, db: S
 # ==========================================================================
 @app.get("/api/services")
 def get_services(request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+    user_session = get_session_user(request)
 
     services = (
         db.query(models.ServiceRecord)
@@ -359,14 +456,28 @@ def get_services(request: Request, db: Session = Depends(get_db)):
         .order_by(models.ServiceRecord.date.desc())
         .all()
     )
-    return {"success": True, "services": [{"id": s.id, "title": s.title, "date": str(s.date), "cost": float(s.cost), "mileage": s.mileage} for s in services]}
+    return {
+        "success": True,
+        "services": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "date": str(s.date),
+                "cost": float(s.cost),
+                "mileage": s.mileage,
+            }
+            for s in services
+        ],
+    }
 
 
 @app.post("/api/services/add")
-def add_service(service_in: schemas.ServiceCreate, request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+def add_service(
+    service_in: schemas.ServiceCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_session = get_session_user(request)
 
     new_service = models.ServiceRecord(
         vehicle_id=service_in.vehicle_id,
@@ -386,9 +497,7 @@ def add_service(service_in: schemas.ServiceCreate, request: Request, db: Session
 # ==========================================================================
 @app.get("/api/documents")
 def get_documents(request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+    user_session = get_session_user(request)
 
     documents = (
         db.query(models.Document)
@@ -397,14 +506,27 @@ def get_documents(request: Request, db: Session = Depends(get_db)):
         .order_by(models.Document.expiry_date.asc())
         .all()
     )
-    return {"success": True, "documents": [{"id": d.id, "doc_type": d.doc_type, "expiry_date": str(d.expiry_date), "note": d.note} for d in documents]}
+    return {
+        "success": True,
+        "documents": [
+            {
+                "id": d.id,
+                "doc_type": d.doc_type,
+                "expiry_date": str(d.expiry_date),
+                "note": d.note,
+            }
+            for d in documents
+        ],
+    }
 
 
 @app.post("/api/documents/add")
-def add_document(doc_in: schemas.DocumentCreate, request: Request, db: Session = Depends(get_db)):
-    user_session = request.session.get("user")
-    if not user_session:
-        raise HTTPException(status_code=401, detail="Nepřihlášený uživatel")
+def add_document(
+    doc_in: schemas.DocumentCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_session = get_session_user(request)
 
     new_doc = models.Document(
         vehicle_id=doc_in.vehicle_id,
@@ -422,14 +544,26 @@ def add_document(doc_in: schemas.DocumentCreate, request: Request, db: Session =
 # ==========================================================================
 frontend_dist = os.path.join("frontend", "dist")
 if os.path.exists(frontend_dist):
-    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/")
+    def serve_index():
+        return FileResponse(os.path.join(frontend_dist, "index.html"))
 
     @app.get("/{full_path:path}")
     def serve_react(full_path: str):
-        if full_path.startswith("api"):
+        if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API endpoint nenalezen")
-        
-        target_file = os.path.join(frontend_dist, full_path)
-        if os.path.exists(target_file) and os.path.isfile(target_file):
+
+        target_file = os.path.abspath(os.path.join(frontend_dist, full_path))
+        dist_root = os.path.abspath(frontend_dist)
+        if (
+            target_file.startswith(dist_root + os.sep)
+            and os.path.exists(target_file)
+            and os.path.isfile(target_file)
+        ):
             return FileResponse(target_file)
+
         return FileResponse(os.path.join(frontend_dist, "index.html"))
