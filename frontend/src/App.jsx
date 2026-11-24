@@ -4,11 +4,35 @@ import { account } from './appwrite';
 import AuthView from './components/AuthView';
 import StatsCharts from './components/StatsCharts';
 
+const gridSectionStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+  gap: '14px',
+};
+
+const vinBoxStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(240px, 1fr) auto',
+  gap: '12px',
+  alignItems: 'end',
+  padding: '14px',
+  borderRadius: '12px',
+  background: 'rgba(255, 255, 255, 0.03)',
+  border: '1px solid rgba(255, 255, 255, 0.08)',
+};
+
+const stackFormStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '16px',
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
 
+  const [selectedVehicleId, setSelectedVehicleId] = useState(null);
   const [dashboardData, setDashboardData] = useState(null);
   const [trips, setTrips] = useState([]);
   const [refuelings, setRefuelings] = useState([]);
@@ -23,34 +47,63 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState('');
 
   const [newTrip, setNewTrip] = useState({ title: '', date: '', distance_km: '', start_location: '', destination: '', note: '' });
-  const [newVehicle, setNewVehicle] = useState({ brand: '', model: '', year: '', vin: '', license_plate: '' });
+  const [newVehicle, setNewVehicle] = useState({
+    brand: '',
+    model: '',
+    year: '',
+    vin: '',
+    license_plate: '',
+    engine: '',
+    power_kw: '',
+  });
+  const [vinLoading, setVinLoading] = useState(false);
+  const [vinStatus, setVinStatus] = useState('');
+  const [lastFetchedVin, setLastFetchedVin] = useState('');
 
-  const loadAllData = () => {
-    fetch('/api/dashboard', { credentials: 'include' })
-      .then(res => res.json())
-      .then(data => { if (data.success) setDashboardData(data); });
+  const [newRefueling, setNewRefueling] = useState({ date: '', liters: '', price_total: '', odometer: '', note: '' });
+  const [newService, setNewService] = useState({ title: '', date: '', cost: '', mileage: '', note: '' });
+  const [newDocument, setNewDocument] = useState({ doc_type: 'STK', expiry_date: '', note: '' });
+
+  const loadAllData = async (preferredVehicleId = selectedVehicleId) => {
+    try {
+      const dashQuery = preferredVehicleId ? `?vehicle_id=${encodeURIComponent(preferredVehicleId)}` : '';
+      const dashRes = await fetch(`/api/dashboard${dashQuery}`, { credentials: 'include' });
+      const dashJson = await dashRes.json();
+      if (dashJson.success) {
+        setDashboardData(dashJson);
+        const activeId = dashJson.selected_vehicle?.id ?? dashJson.vehicles?.[0]?.id ?? null;
+        if (activeId !== null) {
+          setSelectedVehicleId(activeId);
+        }
+      }
+    } catch {
+      // ignorovat chybu sítě při obnově
+    }
 
     fetch('/api/trips', { credentials: 'include' })
       .then(res => res.json())
-      .then(data => { if (data.success) setTrips(data.trips); });
+      .then(data => { if (data.success) setTrips(data.trips); })
+      .catch(() => {});
 
     fetch('/api/refuelings', { credentials: 'include' })
       .then(res => res.json())
-      .then(data => { if (data.success) setRefuelings(data.refuelings); });
+      .then(data => { if (data.success) setRefuelings(data.refuelings); })
+      .catch(() => {});
 
     fetch('/api/services', { credentials: 'include' })
       .then(res => res.json())
-      .then(data => { if (data.success) setServices(data.services); });
+      .then(data => { if (data.success) setServices(data.services); })
+      .catch(() => {});
 
     fetch('/api/documents', { credentials: 'include' })
       .then(res => res.json())
-      .then(data => { if (data.success) setDocuments(data.documents); });
+      .then(data => { if (data.success) setDocuments(data.documents); })
+      .catch(() => {});
   };
 
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // 1. Zkusíme, zda je aktivní Appwrite session (návrat z Google OAuth)
         const appwriteUser = await account.get();
         const jwtRes = await account.createJWT().catch(() => null);
 
@@ -68,21 +121,20 @@ export default function App() {
         const data = await res.json();
         if (data.success) {
           setUser(data.user);
-          loadAllData();
+          await loadAllData();
           setLoading(false);
           return;
         }
       } catch {
-        // Není přihlášen přes Appwrite -> pokračujeme kontrolou klasické FastAPI session
+        // Není přihlášen přes Appwrite -> kontrola klasické FastAPI session
       }
 
-      // 2. Kontrola klasické FastAPI session
       try {
         const res = await fetch('/api/auth/me', { credentials: 'include' });
         const data = await res.json();
         if (data.success) {
           setUser(data.user);
-          loadAllData();
+          await loadAllData();
         }
       } catch {
         // Nepřihlášen
@@ -93,6 +145,12 @@ export default function App() {
 
     initAuth();
   }, []);
+
+  const handleVehicleChange = async (nextId) => {
+    const parsedId = nextId ? Number(nextId) : null;
+    setSelectedVehicleId(parsedId);
+    await loadAllData(parsedId);
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -106,7 +164,7 @@ export default function App() {
     const data = await res.json();
     if (data.success) {
       setUser(data.user);
-      loadAllData();
+      await loadAllData();
     } else {
       setErrorMsg(data.detail || 'Chyba při přihlášení');
     }
@@ -124,7 +182,7 @@ export default function App() {
     const data = await res.json();
     if (data.success) {
       setUser(data.user);
-      loadAllData();
+      await loadAllData();
     } else {
       setErrorMsg(data.detail || 'Chyba při registraci');
     }
@@ -133,7 +191,7 @@ export default function App() {
   const handleGoogleLogin = () => {
     setErrorMsg('');
     const redirectUrl = 'http://localhost:8000';
-account.createOAuth2Session('google', redirectUrl, redirectUrl);
+    account.createOAuth2Session('google', redirectUrl, redirectUrl);
   };
 
   const handleLogout = async () => {
@@ -141,40 +199,197 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
     await account.deleteSession('current').catch(() => {});
     setUser(null);
     setDashboardData(null);
+    setSelectedVehicleId(null);
+  };
+
+  const lookupVin = async (rawVin) => {
+    const cleanVin = (rawVin || '').trim().toUpperCase();
+    if (cleanVin.length !== 17) {
+      setVinStatus('VIN musí mít přesně 17 znaků.');
+      return;
+    }
+
+    setVinLoading(true);
+    setVinStatus('Načítám data podle VIN...');
+    try {
+      const res = await fetch(`/api/etechnicak/${encodeURIComponent(cleanVin)}`, {
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setVinStatus(data.detail || 'VIN se nepodařilo dekódovat.');
+        return;
+      }
+
+      setNewVehicle(prev => ({
+        ...prev,
+        vin: cleanVin,
+        brand: data.brand || prev.brand,
+        model: data.model || prev.model,
+        year: data.year ? String(data.year) : prev.year,
+        license_plate: data.license_plate || prev.license_plate,
+        engine: data.engine || prev.engine,
+        power_kw: data.power_kw ? String(data.power_kw) : prev.power_kw,
+      }));
+      setLastFetchedVin(cleanVin);
+
+      if (data.stk_valid_to) {
+        setNewDocument(prev => ({
+          ...prev,
+          doc_type: 'STK',
+          expiry_date: prev.expiry_date || data.stk_valid_to,
+        }));
+      }
+
+      setVinStatus(`Doplněno ze zdroje: ${(data.source || 'api').toUpperCase()}`);
+    } catch {
+      setVinStatus('Chyba při komunikaci se serverem.');
+    } finally {
+      setVinLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const cleanVin = (newVehicle.vin || '').trim().toUpperCase();
+    if (cleanVin.length === 17 && cleanVin !== lastFetchedVin && !vinLoading) {
+      lookupVin(cleanVin);
+    }
+  }, [newVehicle.vin]);
+
+  const activeVehicleId = selectedVehicleId ?? dashboardData?.selected_vehicle?.id ?? null;
+
+  const ensureVehicleSelected = () => {
+    if (!activeVehicleId) {
+      alert('Nejprve vyber nebo přidej vozidlo!');
+      return false;
+    }
+    return true;
   };
 
   const handleAddVehicle = async (e) => {
     e.preventDefault();
+    const payload = {
+      ...newVehicle,
+      vin: newVehicle.vin ? newVehicle.vin.trim().toUpperCase() : null,
+      year: newVehicle.year ? parseInt(newVehicle.year, 10) : null,
+      power_kw: newVehicle.power_kw ? parseInt(newVehicle.power_kw, 10) : null,
+      engine: newVehicle.engine || null,
+      license_plate: newVehicle.license_plate || null,
+    };
+
     const res = await fetch('/api/vehicles/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newVehicle),
+      body: JSON.stringify(payload),
       credentials: 'include'
     });
     if (res.ok) {
-      setNewVehicle({ brand: '', model: '', year: '', vin: '', license_plate: '' });
-      loadAllData();
+      const created = await res.json().catch(() => ({}));
+      const nextId = created.vehicle_id || selectedVehicleId;
+      setNewVehicle({ brand: '', model: '', year: '', vin: '', license_plate: '', engine: '', power_kw: '' });
+      setLastFetchedVin('');
+      setVinStatus('');
+      await loadAllData(nextId);
       alert('Vozidlo úspěšně přidáno!');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert(err.detail || 'Nepodařilo se uložit vozidlo.');
     }
   };
 
   const handleAddTrip = async (e) => {
     e.preventDefault();
-    if (!dashboardData?.selected_vehicle) return alert('Nejprve vyber nebo přidej vozidlo!');
+    if (!ensureVehicleSelected()) return;
     const res = await fetch('/api/trips/add', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...newTrip,
-        vehicle_id: dashboardData.selected_vehicle.id,
+        vehicle_id: activeVehicleId,
         distance_km: parseFloat(newTrip.distance_km)
       }),
       credentials: 'include'
     });
     if (res.ok) {
       setNewTrip({ title: '', date: '', distance_km: '', start_location: '', destination: '', note: '' });
-      loadAllData();
+      await loadAllData(activeVehicleId);
       alert('Výlet přidán!');
+    }
+  };
+
+  const handleAddRefueling = async (e) => {
+    e.preventDefault();
+    if (!ensureVehicleSelected()) return;
+    const res = await fetch('/api/refuelings/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vehicle_id: activeVehicleId,
+        date: newRefueling.date,
+        liters: parseFloat(newRefueling.liters),
+        price_total: parseFloat(newRefueling.price_total),
+        odometer: parseInt(newRefueling.odometer, 10),
+        note: newRefueling.note || null,
+      }),
+      credentials: 'include'
+    });
+    if (res.ok) {
+      setNewRefueling({ date: '', liters: '', price_total: '', odometer: '', note: '' });
+      await loadAllData(activeVehicleId);
+      alert('Tankování přidáno!');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert(err.detail || 'Nepodařilo se uložit tankování.');
+    }
+  };
+
+  const handleAddService = async (e) => {
+    e.preventDefault();
+    if (!ensureVehicleSelected()) return;
+    const res = await fetch('/api/services/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vehicle_id: activeVehicleId,
+        title: newService.title,
+        date: newService.date,
+        cost: parseFloat(newService.cost),
+        mileage: parseInt(newService.mileage, 10),
+        note: newService.note || null,
+      }),
+      credentials: 'include'
+    });
+    if (res.ok) {
+      setNewService({ title: '', date: '', cost: '', mileage: '', note: '' });
+      await loadAllData(activeVehicleId);
+      alert('Servis přidán!');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert(err.detail || 'Nepodařilo se uložit servis.');
+    }
+  };
+
+  const handleAddDocument = async (e) => {
+    e.preventDefault();
+    if (!ensureVehicleSelected()) return;
+    const res = await fetch('/api/documents/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vehicle_id: activeVehicleId,
+        doc_type: newDocument.doc_type,
+        expiry_date: newDocument.expiry_date,
+        note: newDocument.note || null,
+      }),
+      credentials: 'include'
+    });
+    if (res.ok) {
+      setNewDocument({ doc_type: 'STK', expiry_date: '', note: '' });
+      await loadAllData(activeVehicleId);
+      alert('Doklad přidán!');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert(err.detail || 'Nepodařilo se uložit doklad.');
     }
   };
 
@@ -213,6 +428,7 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
   }
 
   const displayName = user.name || user.full_name || user.email || 'Uživatel';
+  const vehiclesList = dashboardData?.vehicles || [];
 
   return (
     <div style={styles.appContainer}>
@@ -222,6 +438,22 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
             <span style={styles.logoIcon}>🚗</span>
             <h2 style={styles.logoText}>TrackMyRide</h2>
           </div>
+
+          {vehiclesList.length > 0 && (
+            <div style={{ padding: '0 14px 14px' }}>
+              <label style={{ ...styles.label, display: 'block', marginBottom: '6px' }}>Aktivní vozidlo</label>
+              <select
+                value={activeVehicleId || ''}
+                onChange={e => handleVehicleChange(e.target.value)}
+                style={{ ...styles.input, width: '100%' }}
+              >
+                {vehiclesList.map(v => (
+                  <option key={v.id} value={v.id}>{v.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <nav style={styles.nav}>
             <button onClick={() => setActiveTab('dashboard')} style={{ ...styles.navButton, ...(activeTab === 'dashboard' ? styles.navActive : {}) }} className="nav-item">📊 Přehled</button>
             <button onClick={() => setActiveTab('vehicles')} style={{ ...styles.navButton, ...(activeTab === 'vehicles' ? styles.navActive : {}) }} className="nav-item">🚘 Vozidla</button>
@@ -247,7 +479,7 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
               <h2 style={styles.pageTitle}>Statistiky a přehled</h2>
               <span style={styles.liveBadge}>● Systém aktivní</span>
             </div>
-            {dashboardData && dashboardData.vehicles.length > 0 ? (
+            {vehiclesList.length > 0 ? (
               <>
                 <div style={styles.statsGrid}>
                   <div style={styles.cardGlass} className="card-hover">
@@ -291,13 +523,44 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
             <h2 style={styles.pageTitle}>Správa vozidel</h2>
             <div style={styles.cardGlass}>
               <h3 style={styles.subTitle}>➕ Přidat nové vozidlo</h3>
-              <form onSubmit={handleAddVehicle} style={styles.inlineForm}>
-                <div style={styles.inputGroup}><label style={styles.label}>Značka</label><input type="text" placeholder="Audi" value={newVehicle.brand} onChange={e => setNewVehicle({...newVehicle, brand: e.target.value})} style={styles.input} required /></div>
-                <div style={styles.inputGroup}><label style={styles.label}>Model</label><input type="text" placeholder="A4 Avant" value={newVehicle.model} onChange={e => setNewVehicle({...newVehicle, model: e.target.value})} style={styles.input} required /></div>
-                <div style={styles.inputGroup}><label style={styles.label}>Rok výroby</label><input type="number" placeholder="2001" value={newVehicle.year} onChange={e => setNewVehicle({...newVehicle, year: e.target.value})} style={styles.input} /></div>
-                <div style={styles.inputGroup}><label style={styles.label}>VIN kód</label><input type="text" placeholder="17 znaků" value={newVehicle.vin} onChange={e => setNewVehicle({...newVehicle, vin: e.target.value})} style={styles.input} /></div>
-                <div style={styles.inputGroup}><label style={styles.label}>SPZ</label><input type="text" placeholder="1AB 2345" value={newVehicle.license_plate} onChange={e => setNewVehicle({...newVehicle, license_plate: e.target.value})} style={styles.input} /></div>
-                <button type="submit" style={styles.primaryButton} className="btn-glow">Uložit vozidlo</button>
+              <form onSubmit={handleAddVehicle} style={stackFormStyle}>
+                <div style={vinBoxStyle}>
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>VIN kód (17 znaků – automatické doplnění)</label>
+                    <input
+                      type="text"
+                      maxLength={17}
+                      placeholder="Např. WVWZZZ3CZ8E123456"
+                      value={newVehicle.vin}
+                      onChange={e => setNewVehicle({ ...newVehicle, vin: e.target.value.toUpperCase() })}
+                      style={styles.input}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => lookupVin(newVehicle.vin)}
+                    disabled={vinLoading}
+                    style={{ ...styles.primaryButton, height: '42px', whiteSpace: 'nowrap' }}
+                    className="btn-glow"
+                  >
+                    {vinLoading ? 'Načítám...' : '🔍 Načíst z VIN'}
+                  </button>
+                </div>
+
+                {vinStatus && <p style={{ ...styles.textMuted, margin: 0 }}>{vinStatus}</p>}
+
+                <div style={gridSectionStyle}>
+                  <div style={styles.inputGroup}><label style={styles.label}>Značka</label><input type="text" placeholder="Audi" value={newVehicle.brand} onChange={e => setNewVehicle({ ...newVehicle, brand: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Model</label><input type="text" placeholder="A4 Avant" value={newVehicle.model} onChange={e => setNewVehicle({ ...newVehicle, model: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Rok výroby</label><input type="number" placeholder="2001" value={newVehicle.year} onChange={e => setNewVehicle({ ...newVehicle, year: e.target.value })} style={styles.input} /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Motor</label><input type="text" placeholder="1.9 TDI" value={newVehicle.engine} onChange={e => setNewVehicle({ ...newVehicle, engine: e.target.value })} style={styles.input} /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Výkon (kW)</label><input type="number" placeholder="96" value={newVehicle.power_kw} onChange={e => setNewVehicle({ ...newVehicle, power_kw: e.target.value })} style={styles.input} /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>SPZ</label><input type="text" placeholder="1AB 2345" value={newVehicle.license_plate} onChange={e => setNewVehicle({ ...newVehicle, license_plate: e.target.value })} style={styles.input} /></div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="submit" style={styles.primaryButton} className="btn-glow">Uložit vozidlo</button>
+                </div>
               </form>
             </div>
           </div>
@@ -307,6 +570,20 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
           <div>
             <h2 style={styles.pageTitle}>Historie tankování</h2>
             <div style={styles.cardGlass}>
+              <h3 style={styles.subTitle}>⛽ Přidat tankování</h3>
+              <form onSubmit={handleAddRefueling} style={stackFormStyle}>
+                <div style={gridSectionStyle}>
+                  <div style={styles.inputGroup}><label style={styles.label}>Datum</label><input type="date" value={newRefueling.date} onChange={e => setNewRefueling({ ...newRefueling, date: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Litry</label><input type="number" step="0.01" placeholder="45.0" value={newRefueling.liters} onChange={e => setNewRefueling({ ...newRefueling, liters: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Celkem Kč</label><input type="number" step="0.01" placeholder="1650" value={newRefueling.price_total} onChange={e => setNewRefueling({ ...newRefueling, price_total: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Tachometr (km)</label><input type="number" placeholder="215000" value={newRefueling.odometer} onChange={e => setNewRefueling({ ...newRefueling, odometer: e.target.value })} style={styles.input} required /></div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="submit" style={styles.primaryButton} className="btn-glow">Uložit tankování</button>
+                </div>
+              </form>
+            </div>
+            <div style={{ ...styles.cardGlass, marginTop: '20px' }}>
               {refuelings.length === 0 ? <p style={styles.textMuted}>Zatím žádné záznamy tankování.</p> : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={styles.table}>
@@ -330,11 +607,15 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
             <h2 style={styles.pageTitle}>Výlety a jízdy</h2>
             <div style={styles.cardGlass}>
               <h3 style={styles.subTitle}>🗺️ Zaznamenat novou jízdu</h3>
-              <form onSubmit={handleAddTrip} style={styles.inlineForm}>
-                <div style={styles.inputGroup}><label style={styles.label}>Účel / Název</label><input type="text" placeholder="Cesta do práce" value={newTrip.title} onChange={e => setNewTrip({...newTrip, title: e.target.value})} style={styles.input} required /></div>
-                <div style={styles.inputGroup}><label style={styles.label}>Datum</label><input type="date" value={newTrip.date} onChange={e => setNewTrip({...newTrip, date: e.target.value})} style={styles.input} required /></div>
-                <div style={styles.inputGroup}><label style={styles.label}>Vzdálenost (km)</label><input type="number" step="0.1" placeholder="45.5" value={newTrip.distance_km} onChange={e => setNewTrip({...newTrip, distance_km: e.target.value})} style={styles.input} required /></div>
-                <button type="submit" style={styles.primaryButton} className="btn-glow">Přidat výlet</button>
+              <form onSubmit={handleAddTrip} style={stackFormStyle}>
+                <div style={gridSectionStyle}>
+                  <div style={styles.inputGroup}><label style={styles.label}>Účel / Název</label><input type="text" placeholder="Cesta do práce" value={newTrip.title} onChange={e => setNewTrip({ ...newTrip, title: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Datum</label><input type="date" value={newTrip.date} onChange={e => setNewTrip({ ...newTrip, date: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Vzdálenost (km)</label><input type="number" step="0.1" placeholder="45.5" value={newTrip.distance_km} onChange={e => setNewTrip({ ...newTrip, distance_km: e.target.value })} style={styles.input} required /></div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="submit" style={styles.primaryButton} className="btn-glow">Přidat výlet</button>
+                </div>
               </form>
             </div>
             <div style={{ ...styles.cardGlass, marginTop: '20px' }}>
@@ -361,6 +642,20 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
           <div>
             <h2 style={styles.pageTitle}>Servis a údržba</h2>
             <div style={styles.cardGlass}>
+              <h3 style={styles.subTitle}>🛠️ Přidat servisní záznam</h3>
+              <form onSubmit={handleAddService} style={stackFormStyle}>
+                <div style={gridSectionStyle}>
+                  <div style={styles.inputGroup}><label style={styles.label}>Název úkonu</label><input type="text" placeholder="Výměna oleje" value={newService.title} onChange={e => setNewService({ ...newService, title: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Datum</label><input type="date" value={newService.date} onChange={e => setNewService({ ...newService, date: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Cena (Kč)</label><input type="number" step="0.01" placeholder="2500" value={newService.cost} onChange={e => setNewService({ ...newService, cost: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Nájezd (km)</label><input type="number" placeholder="215000" value={newService.mileage} onChange={e => setNewService({ ...newService, mileage: e.target.value })} style={styles.input} required /></div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="submit" style={styles.primaryButton} className="btn-glow">Uložit servis</button>
+                </div>
+              </form>
+            </div>
+            <div style={{ ...styles.cardGlass, marginTop: '20px' }}>
               {services.length === 0 ? <p style={styles.textMuted}>Žádné servisní záznamy.</p> : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={styles.table}>
@@ -383,6 +678,19 @@ account.createOAuth2Session('google', redirectUrl, redirectUrl);
           <div>
             <h2 style={styles.pageTitle}>Doklady a STK</h2>
             <div style={styles.cardGlass}>
+              <h3 style={styles.subTitle}>📄 Přidat doklad / STK</h3>
+              <form onSubmit={handleAddDocument} style={stackFormStyle}>
+                <div style={gridSectionStyle}>
+                  <div style={styles.inputGroup}><label style={styles.label}>Typ dokladu</label><input type="text" placeholder="STK" value={newDocument.doc_type} onChange={e => setNewDocument({ ...newDocument, doc_type: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Platnost do</label><input type="date" value={newDocument.expiry_date} onChange={e => setNewDocument({ ...newDocument, expiry_date: e.target.value })} style={styles.input} required /></div>
+                  <div style={styles.inputGroup}><label style={styles.label}>Poznámka</label><input type="text" placeholder="Stanice TK" value={newDocument.note} onChange={e => setNewDocument({ ...newDocument, note: e.target.value })} style={styles.input} /></div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="submit" style={styles.primaryButton} className="btn-glow">Uložit doklad</button>
+                </div>
+              </form>
+            </div>
+            <div style={{ ...styles.cardGlass, marginTop: '20px' }}>
               {documents.length === 0 ? <p style={styles.textMuted}>Žádné uložené doklady.</p> : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={styles.table}>

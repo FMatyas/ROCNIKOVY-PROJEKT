@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 import os
+import time
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ import core.models as models
 from core import crud, schemas
 from database import Base, engine, get_db
 
-# Načtení proměnných z .env souboru
+# Načtení proměnných z .env souboru (pouze jako fallback)
 load_dotenv()
 
 Base.metadata.create_all(bind=engine)
@@ -44,6 +45,24 @@ app.add_middleware(
 )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Appwrite konfigurace
+APPWRITE_ENDPOINT = os.getenv("APPWRITE_ENDPOINT", "http://localhost/v1").rstrip("/")
+APPWRITE_PROJECT_ID = os.getenv("APPWRITE_PROJECT_ID", "6ad8a52c00186563c091").strip()
+APPWRITE_DATABASE_ID = os.getenv("APPWRITE_DATABASE_ID", "6ad8ad050001934d73fb").strip()
+APPWRITE_COLLECTION_ID = os.getenv(
+    "APPWRITE_COLLECTION_ID", "6b05f96e002be9bb345a"
+).strip()
+APPWRITE_DOCUMENT_ID = os.getenv("APPWRITE_DOCUMENT_ID", "mdcr").strip()
+APPWRITE_API_KEY = os.getenv(
+    "APPWRITE_API_KEY",
+    "46fb4787a4b51b5c48a3d707ce3110e46dc3710924c02f906e27fcb621b35c23f589f756671bc49deaedfadf712694db55b3776a4b3788c052f5108f745d6f7f9f0303e405fb1e2c078f0640910c9e94742bd726931df43c9e4366680148eac33c50ff2ea7d9e7331b668bff53eb5bd0e7f2ef07000e133d1d1a0eba6c001a60",
+).strip()
+
+DEFAULT_MDCR_API_KEY = "UL48f06jWdtL6rlTEcVx9Mgehx8DoGY5"
+
+_CONFIG_CACHE: dict = {"expires_at": 0.0, "data": None}
+CONFIG_TTL_SECONDS = 30.0
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -72,8 +91,240 @@ def get_session_user(request: Request) -> dict:
     return user_session
 
 
+def _load_mdcr_config(force_refresh: bool = False) -> dict:
+    """Načte konfiguraci MDČR z Appwrite dokumentu; při chybě použije .env / fallback."""
+    now = time.monotonic()
+    if not force_refresh and _CONFIG_CACHE["data"] is not None and now < _CONFIG_CACHE["expires_at"]:
+        return _CONFIG_CACHE["data"]
+
+    fallback = {
+        "mdcr_api_url": os.getenv("MDCR_API_URL", "").strip(),
+        "mdcr_api_key": os.getenv("MDCR_API_KEY", DEFAULT_MDCR_API_KEY).strip(),
+        "mdcr_api_header": os.getenv("MDCR_API_HEADER", "X-API-Key").strip() or "X-API-Key",
+    }
+
+    if (
+        APPWRITE_ENDPOINT
+        and APPWRITE_PROJECT_ID
+        and APPWRITE_DATABASE_ID
+        and APPWRITE_COLLECTION_ID
+        and APPWRITE_DOCUMENT_ID
+    ):
+        url = (
+            f"{APPWRITE_ENDPOINT}/databases/{APPWRITE_DATABASE_ID}"
+            f"/collections/{APPWRITE_COLLECTION_ID}/documents/{APPWRITE_DOCUMENT_ID}"
+        )
+        headers = {
+            "Accept": "application/json",
+            "X-Appwrite-Project": APPWRITE_PROJECT_ID,
+        }
+        if APPWRITE_API_KEY:
+            headers["X-Appwrite-Key"] = APPWRITE_API_KEY
+
+        try:
+            resp = requests.get(url, headers=headers, timeout=4)
+            if resp.status_code == 200:
+                doc = resp.json()
+                cfg = {
+                    "mdcr_api_url": str(doc.get("mdcr_api_url") or fallback["mdcr_api_url"]).strip(),
+                    "mdcr_api_key": str(doc.get("mdcr_api_key") or fallback["mdcr_api_key"]).strip(),
+                    "mdcr_api_header": str(
+                        doc.get("mdcr_api_header") or fallback["mdcr_api_header"]
+                    ).strip()
+                    or "X-API-Key",
+                }
+                _CONFIG_CACHE["data"] = cfg
+                _CONFIG_CACHE["expires_at"] = now + CONFIG_TTL_SECONDS
+                return cfg
+            print(f"Appwrite config vrátilo status {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"Chyba při čtení konfigurace z Appwrite: {e}")
+
+    _CONFIG_CACHE["data"] = fallback
+    _CONFIG_CACHE["expires_at"] = now + 5.0
+    return fallback
+
+
+def _extract_first(data: dict, keys: list[str], default=None):
+    for key in keys:
+        if key in data and data[key] not in (None, ""):
+            return data[key]
+    return default
+
+
+def _fetch_mdcr_vin(vin: str) -> Optional[dict]:
+    """Dotaz na Data o vozidlech (MDČR), pokud je nastavena URL a API klíč v Appwrite / env."""
+    cfg = _load_mdcr_config()
+    api_url = cfg["mdcr_api_url"]
+    api_key = cfg["mdcr_api_key"]
+    api_header = cfg["mdcr_api_header"]
+
+    if not api_url or not api_key:
+        return None
+
+    headers = {
+        "Accept": "application/json",
+        api_header: api_key,
+    }
+
+    try:
+        if "{vin}" in api_url:
+            url = api_url.format(vin=vin)
+            resp = requests.get(url, headers=headers, timeout=8)
+        else:
+            resp = requests.get(
+                api_url, params={"vin": vin}, headers=headers, timeout=8
+            )
+
+        if resp.status_code != 200:
+            print(f"MDČR API vrátilo status {resp.status_code}: {resp.text[:200]}")
+            return None
+
+        payload = resp.json()
+        item = payload
+        if isinstance(payload, dict):
+            for container_key in ("data", "result", "vehicle", "vozidlo"):
+                if isinstance(payload.get(container_key), dict):
+                    item = payload[container_key]
+                    break
+                if (
+                    isinstance(payload.get(container_key), list)
+                    and payload[container_key]
+                ):
+                    item = payload[container_key][0]
+                    break
+
+        if not isinstance(item, dict):
+            return None
+
+        brand = _extract_first(
+            item, ["brand", "make", "znacka", "tovarniZnacka", "vyrobce"], ""
+        )
+        model = _extract_first(
+            item, ["model", "obchodniOznaceni", "typ"], ""
+        )
+        engine = _extract_first(
+            item, ["engine", "motor", "palivo", "druhPaliva", "zdvihovyObjem"], ""
+        )
+        power_raw = _extract_first(
+            item, ["power_kw", "vykonKw", "maxVykonKw", "kw"], None
+        )
+        year_raw = _extract_first(
+            item, ["year", "rokVyroby", "datumPrvniRegistrace"], None
+        )
+        plate = _extract_first(
+            item, ["license_plate", "spz", "rz", "registracniZnacka"], ""
+        )
+        stk_valid_to = _extract_first(
+            item,
+            [
+                "stk_valid_to",
+                "stkDo",
+                "platnostStk",
+                "platnostTechnickeProhlidky",
+                "tpDo",
+            ],
+            None,
+        )
+        emissions_valid_to = _extract_first(
+            item,
+            ["emissions_valid_to", "emiseDo", "platnostEmisi", "smeDo"],
+            None,
+        )
+
+        power_kw = None
+        if power_raw is not None:
+            try:
+                power_kw = int(float(str(power_raw).replace(",", ".").split()[0]))
+            except (ValueError, TypeError):
+                power_kw = None
+
+        year = None
+        if year_raw is not None:
+            digits = "".join(ch for ch in str(year_raw)[:4] if ch.isdigit())
+            if len(digits) == 4:
+                year = int(digits)
+
+        has_any = any(
+            [brand, model, engine, power_kw, year, plate, stk_valid_to, emissions_valid_to]
+        )
+        if not has_any:
+            return None
+
+        return {
+            "success": True,
+            "source": "mdcr",
+            "brand": str(brand).title() if brand else "",
+            "model": str(model),
+            "engine": str(engine),
+            "power_kw": power_kw,
+            "year": year,
+            "license_plate": str(plate).upper(),
+            "stk_valid_to": str(stk_valid_to) if stk_valid_to else None,
+            "emissions_valid_to": str(emissions_valid_to) if emissions_valid_to else None,
+        }
+    except Exception as e:
+        print(f"Chyba při volání MDČR API: {e}")
+        return None
+
+
+def _fetch_nhtsa_vin(vin: str) -> dict:
+    """Veřejný fallback přes NHTSA vPIC."""
+    try:
+        fallback_url = (
+            f"https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/{vin}?format=json"
+        )
+        fb_resp = requests.get(fallback_url, timeout=5)
+        if fb_resp.status_code == 200:
+            fb_data = fb_resp.json()
+            results = fb_data.get("Results", [])
+            if results:
+                car = results[0]
+                brand = car.get("Make")
+                model = car.get("Model")
+                year = car.get("ModelYear")
+                displacement = car.get("DisplacementL")
+                fuel = car.get("FuelTypePrimary")
+
+                engine_str = ""
+                if displacement:
+                    engine_str += f"{displacement}L "
+                if fuel:
+                    engine_str += fuel
+
+                if brand or model:
+                    return {
+                        "success": True,
+                        "source": "nhtsa",
+                        "brand": brand.title() if brand else "",
+                        "model": model or "",
+                        "engine": engine_str.strip(),
+                        "power_kw": None,
+                        "year": int(year) if year and str(year).isdigit() else None,
+                        "license_plate": "",
+                        "stk_valid_to": None,
+                        "emissions_valid_to": None,
+                    }
+    except Exception as e:
+        print(f"Chyba při dekódování VIN přes NHTSA: {e}")
+
+    return {
+        "success": True,
+        "source": "none",
+        "brand": "",
+        "model": "",
+        "engine": "",
+        "power_kw": None,
+        "year": None,
+        "license_plate": "",
+        "stk_valid_to": None,
+        "emissions_valid_to": None,
+    }
+
+
 @app.on_event("startup")
 def create_admin_user():
+    _load_mdcr_config(force_refresh=True)
     db = next(get_db())
     try:
         admin_email = "admin@trackmyride.cz"
@@ -94,7 +345,9 @@ def create_admin_user():
         db.close()
 
 
-# UNIVERZÁLNÍ VEŘEJNÉ VIN API
+# ==========================================================================
+# 🔍 DEKÓDOVÁNÍ VIN (MDČR + NHTSA FALLBACK)
+# ==========================================================================
 @app.get("/api/etechnicak/{vin}")
 def fetch_vin_data(vin: str):
     clean_vin = vin.strip().upper()
@@ -103,50 +356,11 @@ def fetch_vin_data(vin: str):
             status_code=400, detail="VIN kód musí mít přesně 17 znaků."
         )
 
-    try:
-        fallback_url = (
-            f"https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/{clean_vin}?format=json"
-        )
-        fb_resp = requests.get(fallback_url, timeout=5)
-        if fb_resp.status_code == 200:
-            fb_data = fb_resp.json()
-            results = fb_data.get("Results", [])
-            if results:
-                car = results[0]
-                brand = car.get("Make")
-                model = car.get("Model")
-                year = car.get("ModelYear")
-                displacement = car.get("DisplacementL")
-                fuel = car.get("FuelTypePrimary")
+    mdcr_result = _fetch_mdcr_vin(clean_vin)
+    if mdcr_result:
+        return mdcr_result
 
-                engine_str = ""
-                if displacement:
-                    engine_str += f"{displacement}L "
-                if fuel:
-                    engine_str += fuel
-
-                if brand and model:
-                    return {
-                        "success": True,
-                        "brand": brand.title(),
-                        "model": model,
-                        "engine": engine_str.strip(),
-                        "power_kw": None,
-                        "year": int(year) if year and year.isdigit() else None,
-                        "license_plate": "",
-                    }
-    except Exception as e:
-        print(f"Chyba při dekódování VIN: {e}")
-
-    return {
-        "success": True,
-        "brand": "",
-        "model": "",
-        "engine": "",
-        "power_kw": None,
-        "year": None,
-        "license_plate": "",
-    }
+    return _fetch_nhtsa_vin(clean_vin)
 
 
 # ==========================================================================
@@ -330,6 +544,29 @@ def dashboard_data(
 # ==========================================================================
 # 🚗 VOZIDLA API
 # ==========================================================================
+@app.get("/api/vehicles")
+def get_vehicles(request: Request, db: Session = Depends(get_db)):
+    user_session = get_session_user(request)
+    vehicles = crud.get_user_vehicles(db, user_id=user_session["id"])
+    return {
+        "success": True,
+        "vehicles": [
+            {
+                "id": v.id,
+                "name": v.name,
+                "brand": v.brand,
+                "model": v.model,
+                "vin": getattr(v, "vin", None),
+                "year": getattr(v, "year", None),
+                "engine": getattr(v, "engine", None),
+                "power_kw": getattr(v, "power_kw", None),
+                "license_plate": getattr(v, "license_plate", None),
+            }
+            for v in vehicles
+        ],
+    }
+
+
 @app.post("/api/vehicles/add")
 def add_vehicle(
     vehicle_in: schemas.VehicleCreate,
